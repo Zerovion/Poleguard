@@ -7,6 +7,11 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
+  // Explicitly target Vercel — without this, the build falls back to the
+  // Cloudflare default baked into @lovable.dev/vite-tanstack-config, which
+  // Vercel doesn't know how to serve (causes API routes like
+  // /api/public/ingest to 404 with Vercel's generic error page).
+  nitro: { preset: "vercel" },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
