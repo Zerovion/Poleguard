@@ -67,6 +67,19 @@ export const Route = createFileRoute("/api/public/ingest")({
         // Dynamic import keeps the service-role client out of the client bundle
         // (this file is a server route, but api.functions.ts imports follow the
         // same rule elsewhere in this repo).
+        // Fail with a readable JSON error (instead of Vercel's HTML error page)
+        // when Supabase env vars are missing on the server.
+        const missing = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"].filter(
+          (k) => !process.env[k],
+        );
+        if (missing.length) {
+          console.error("[ingest] missing env vars:", missing.join(", "));
+          return Response.json(
+            { error: `Server missing env var(s): ${missing.join(", ")}` },
+            { status: 500 },
+          );
+        }
+
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
         const rows = readings.map((r) => ({
