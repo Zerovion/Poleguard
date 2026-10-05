@@ -37,13 +37,13 @@ const AlertStateContext = createContext<Ctx | null>(null);
 
 export function AlertStateProvider({ children }: { children: ReactNode }) {
   const [overrides, setOverrides] = useState<Overrides>({});
-  const [soundEnabled, setSoundEnabledState] = useState(false);
+  const [soundEnabled, setSoundEnabledState] = useState(true);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) setOverrides(JSON.parse(raw) as Overrides);
-      setSoundEnabledState(localStorage.getItem(SOUND_KEY) === "1");
+      setSoundEnabledState(localStorage.getItem(SOUND_KEY) !== "0");
     } catch {
       /* ignore corrupt storage */
     }

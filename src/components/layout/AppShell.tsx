@@ -6,9 +6,11 @@ import { Topbar } from "./Topbar";
 import { PageTransition } from "./PageTransition";
 import { AlertStateProvider } from "@/features/alert-state";
 import { useCriticalWatch } from "@/hooks/use-critical-watch";
+import { useCriticalSiren } from "@/hooks/use-critical-siren";
 
 function CriticalWatcher() {
   useCriticalWatch();
+  useCriticalSiren();
   return null;
 }
 

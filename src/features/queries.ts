@@ -16,7 +16,11 @@ export const polesQuery = () =>
   queryOptions({ queryKey: ["poles"], queryFn: () => getPoles(), refetchInterval: 5000 });
 
 export const sitePowerStatusQuery = () =>
-  queryOptions({ queryKey: ["site-power-status"], queryFn: () => getSitePowerStatus() });
+  queryOptions({
+    queryKey: ["site-power-status"],
+    queryFn: () => getSitePowerStatus(),
+    refetchInterval: 3000,
+  });
 
 export const poleQuery = (id: string) =>
   queryOptions({ queryKey: ["pole", id], queryFn: () => getPole({ data: { id } }) });

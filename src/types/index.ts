@@ -37,6 +37,8 @@ export interface Pole {
 export interface SitePowerStatus {
   colony: string;
   maintenanceSwitchOn: boolean;
+  /** true when the value comes from the live ESP32 (not the demo default) */
+  live?: boolean;
 }
 
 export interface SensorReading {

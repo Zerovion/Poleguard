@@ -16,7 +16,9 @@ export function SitePowerStatusCard() {
       <div>
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm font-semibold">{data.colony} · Maintenance &amp; Power</p>
-          <StatusBadge variant="muted">Demo status</StatusBadge>
+          <StatusBadge variant={data.live ? "normal" : "muted"}>
+            {data.live ? "Live" : "Demo status"}
+          </StatusBadge>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {data.maintenanceSwitchOn

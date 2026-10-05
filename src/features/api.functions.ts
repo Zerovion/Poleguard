@@ -146,9 +146,19 @@ export const getPoles = createServerFn({ method: "GET" }).handler(async () => {
   return POLES.map((pole) => mergeLivePole(pole, live.get(`${pole.id}:${pole.metric}`)));
 });
 
-export const getSitePowerStatus = createServerFn({ method: "GET" }).handler(
-  async () => SITE_POWER_STATUS,
-);
+export const getSitePowerStatus = createServerFn({ method: "GET" }).handler(async () => {
+  const live = await fetchLatestStateByPoleId();
+  // Newest row that carries the maintenance switch state wins.
+  const newest = [...live.values()]
+    .filter((r) => r.maintenance_switch_on != null)
+    .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime())[0];
+  if (!newest) return SITE_POWER_STATUS;
+  return {
+    ...SITE_POWER_STATUS,
+    maintenanceSwitchOn: newest.maintenance_switch_on === true,
+    live: true,
+  };
+});
 
 export const getDevices = createServerFn({ method: "GET" }).handler(async () => DEVICES);
 
