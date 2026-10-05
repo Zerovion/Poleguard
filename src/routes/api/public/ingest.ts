@@ -25,6 +25,33 @@ const readingSchema = z.object({
   tertiary_value: z.number().optional(),
 });
 
+const POLE_INFO: Record<string, { name: string; location: string }> = {
+  P001: { name: "Pole 1", location: "Main Street, Sector 12" },
+  P002: { name: "Pole 2", location: "Industrial Area, Sector 7" },
+  P003: { name: "Pole 3", location: "City Center, Sector 3" },
+};
+
+// Same critical limits the dashboard uses (tilt 15 deg, leakage 0.08 A,
+// sag = IR beam broken).
+function isFaultValue(metric: string, value: number): boolean {
+  if (metric === "sag") return value >= 0.5;
+  if (metric === "tilt") return Math.abs(value) >= 15;
+  return Math.abs(value) >= 0.08;
+}
+
+function describeFault(metric: string, value: number): string {
+  if (metric === "sag") return "Wire sag detected";
+  if (metric === "tilt") return `Tilt ${Math.abs(value).toFixed(1)} deg (limit 15)`;
+  return `Leakage ${value.toFixed(3)} A (limit 0.08)`;
+}
+
+function nowIst(): string {
+  return new Date().toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour12: false,
+  });
+}
+
 const payloadSchema = z.object({
   device_id: z.string().min(1).max(100),
   pole_id: z.enum(["P001", "P002", "P003"]),
@@ -99,18 +126,68 @@ export const Route = createFileRoute("/api/public/ingest")({
           received_at: new Date().toISOString(),
         }));
 
-        const { error: insertError } = await supabaseAdmin.from("esp32_readings").insert(rows);
-        if (insertError) {
-          console.error("[ingest] esp32_readings insert failed", insertError);
+        // Read the previous state first so we can tell when a fault STARTS or ENDS.
+        const { data: prevRows } = await supabaseAdmin
+          .from("esp32_latest_state")
+          .select("metric, value, maintenance_switch_on")
+          .eq("pole_id", pole_id);
+        const prevByMetric = new Map((prevRows ?? []).map((r) => [r.metric, r]));
+
+        // Run both writes in parallel (faster response, fresher dashboard).
+        const [insertRes, upsertRes] = await Promise.all([
+          supabaseAdmin.from("esp32_readings").insert(rows),
+          supabaseAdmin.from("esp32_latest_state").upsert(rows, { onConflict: "pole_id,metric" }),
+        ]);
+        if (insertRes.error) {
+          console.error("[ingest] esp32_readings insert failed", insertRes.error);
           return Response.json({ error: "Insert failed" }, { status: 500 });
         }
-
-        const { error: upsertError } = await supabaseAdmin
-          .from("esp32_latest_state")
-          .upsert(rows, { onConflict: "pole_id,metric" });
-        if (upsertError) {
-          console.error("[ingest] esp32_latest_state upsert failed", upsertError);
+        if (upsertRes.error) {
+          console.error("[ingest] esp32_latest_state upsert failed", upsertRes.error);
           return Response.json({ error: "State update failed" }, { status: 500 });
+        }
+
+        // ---- Telegram alerts (only on a state CHANGE, so no spam) ----
+        try {
+          const info = POLE_INFO[pole_id];
+          const messages: string[] = [];
+
+          for (const r of readings) {
+            const prev = prevByMetric.get(r.metric);
+            const wasFault = prev ? isFaultValue(r.metric, prev.value) : false;
+            const nowFault = isFaultValue(r.metric, r.value);
+            if (nowFault && !wasFault) {
+              messages.push(
+                `\u{1F6A8} FAULT: ${info.name} (${pole_id})\n${describeFault(r.metric, r.value)}\nLocation: ${info.location}\nTime: ${nowIst()}`,
+              );
+            } else if (!nowFault && wasFault) {
+              messages.push(
+                `\u2705 RESOLVED: ${info.name} (${pole_id}) is back to normal\nLocation: ${info.location}\nTime: ${nowIst()}`,
+              );
+            }
+          }
+
+          const prevMaint = [...prevByMetric.values()].find(
+            (r) => r.maintenance_switch_on != null,
+          )?.maintenance_switch_on;
+          if (
+            maintenance_switch_on != null &&
+            prevMaint != null &&
+            prevMaint !== maintenance_switch_on
+          ) {
+            messages.push(
+              maintenance_switch_on
+                ? `\u{1F527} Maintenance switch ON - worker on pole, colony lighting OFF\nTime: ${nowIst()}`
+                : `\u{1F4A1} Maintenance switch OFF - colony lighting ON\nTime: ${nowIst()}`,
+            );
+          }
+
+          if (messages.length > 0) {
+            const { sendTelegram } = await import("@/lib/telegram.server");
+            await sendTelegram(messages.join("\n\n"));
+          }
+        } catch (err) {
+          console.error("[ingest] telegram alert failed", err);
         }
 
         return Response.json({ ok: true, stored: rows.length });
