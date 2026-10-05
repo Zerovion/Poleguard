@@ -93,6 +93,10 @@ export const Route = createFileRoute("/api/public/ingest")({
           signal_dbm: signal_dbm ?? null,
           maintenance_switch_on: maintenance_switch_on ?? null,
           recorded_at: recordedAt,
+          // Must be set explicitly: on upsert-conflict the DB default now() is NOT
+          // re-applied, so received_at would stay frozen at the first insert and
+          // the dashboard would mark the pole Offline after 90s.
+          received_at: new Date().toISOString(),
         }));
 
         const { error: insertError } = await supabaseAdmin.from("esp32_readings").insert(rows);
