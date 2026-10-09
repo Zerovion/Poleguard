@@ -43,7 +43,8 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const { data: devices } = useSuspenseQuery(devicesQuery());
-  const allOnline = devices.every((d) => d.online);
+  const problems = devices.filter((d) => d.state === "error");
+  const allOnline = devices.every((d) => d.state === "ok");
   const reduced = useReducedMotion();
 
 
@@ -113,21 +114,46 @@ export function AppSidebar() {
 
       {!collapsed && (
         <SidebarFooter className="p-3">
-          <div className="panel space-y-2.5 p-3">
+          <div
+            className={`panel space-y-2.5 p-3 ${problems.length > 0 ? "glow-critical border-critical/50" : ""}`}
+          >
             <p className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
               Connection Status
             </p>
             {devices.map((d) => (
-              <div key={d.id} className="flex items-center justify-between text-xs">
-                <span className="text-foreground/80">{d.name}</span>
-                <span
-                  className={`size-2 rounded-full ${d.online ? "bg-normal" : "bg-offline"}`}
-                  aria-label={d.online ? "online" : "offline"}
-                />
+              <div key={d.id} title={d.detail ?? (d.state === "ok" ? "Working" : "")}>
+                <div className="flex items-center justify-between text-xs">
+                  <span className={d.state === "error" ? "font-medium text-critical" : "text-foreground/80"}>
+                    {d.name}
+                  </span>
+                  <span
+                    className={`size-2 rounded-full ${
+                      d.state === "ok"
+                        ? "bg-normal"
+                        : d.state === "error"
+                          ? "animate-pulse bg-critical"
+                          : "bg-muted-foreground/50"
+                    }`}
+                    aria-label={d.state === "ok" ? "working" : d.state === "error" ? "problem" : "not set up"}
+                  />
+                </div>
+                {d.detail && d.state !== "ok" ? (
+                  <p className={`mt-0.5 text-[10px] leading-tight ${d.state === "error" ? "text-critical/90" : "text-muted-foreground"}`}>
+                    {d.detail}
+                  </p>
+                ) : null}
               </div>
             ))}
-            <p className={`text-xs font-medium ${allOnline ? "text-normal" : "text-warning"}`}>
-              {allOnline ? "All Systems Connected" : "Degraded Connectivity"}
+            <p
+              className={`text-xs font-medium ${
+                problems.length > 0 ? "text-critical" : allOnline ? "text-normal" : "text-muted-foreground"
+              }`}
+            >
+              {problems.length > 0
+                ? `${problems.length} problem${problems.length > 1 ? "s" : ""} detected`
+                : allOnline
+                  ? "All Systems Connected"
+                  : "Some services not set up"}
             </p>
           </div>
         </SidebarFooter>

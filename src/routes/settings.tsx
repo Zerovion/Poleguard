@@ -35,7 +35,7 @@ export const Route = createFileRoute("/settings")({
   pendingComponent: SettingsSkeleton,
   pendingMs: 0,
   pendingMinMs: 300,
-  errorComponent: ({ error }) => <p role="alert">{error.message}</p>,
+  errorComponent: ({ error }) => <p role="alert">{error instanceof Error ? error.message : String(error)}</p>,
   notFoundComponent: () => <p>Nothing here.</p>,
 });
 
@@ -95,9 +95,19 @@ function SettingsPage() {
                   key={d.id}
                   className="flex items-center justify-between rounded-lg border border-border bg-surface-2 p-2.5"
                 >
-                  <span className="text-sm">{d.name}</span>
-                  <StatusBadge variant={d.online ? "normal" : "offline"} dot>
-                    {d.online ? "Online" : "Offline"}
+                  <div>
+                    <span className="text-sm">{d.name}</span>
+                    {d.detail && d.state !== "ok" ? (
+                      <p className={`text-xs ${d.state === "error" ? "text-critical" : "text-muted-foreground"}`}>
+                        {d.detail}
+                      </p>
+                    ) : null}
+                  </div>
+                  <StatusBadge
+                    variant={d.state === "ok" ? "normal" : d.state === "error" ? "critical" : "muted"}
+                    dot
+                  >
+                    {d.state === "ok" ? "Working" : d.state === "error" ? "Problem" : "Not set up"}
                   </StatusBadge>
                 </div>
               ))}

@@ -3,7 +3,6 @@ import { z } from "zod";
 
 import {
   ALERTS,
-  DEVICES,
   HEALTH_RADAR,
   POLES,
   SITE_POWER_STATUS,
@@ -12,7 +11,7 @@ import {
   generateSeries,
 } from "@/mocks";
 import type { Tables } from "@/integrations/supabase/types";
-import type { MetricKey, Pole, PoleStatus, SensorReading, TimeRange } from "@/types";
+import type { Device, MetricKey, Pole, PoleStatus, SensorReading, TimeRange } from "@/types";
 
 type LatestStateRow = Tables<"esp32_latest_state">;
 type ReadingRow = Tables<"esp32_readings">;
@@ -160,7 +159,127 @@ export const getSitePowerStatus = createServerFn({ method: "GET" }).handler(asyn
   };
 });
 
-export const getDevices = createServerFn({ method: "GET" }).handler(async () => DEVICES);
+// ---------------------------------------------------------------------------
+// Live "Connection Status" (sidebar + settings page)
+// ---------------------------------------------------------------------------
+const DEVICE_FRESH_MS = 15_000; // ESP32 reports every ~2 s; >15 s of silence = problem
+
+function ageText(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return s < 90 ? `${s}s` : `${Math.round(s / 60)} min`;
+}
+
+let telegramCache: { at: number; device: Pick<Device, "state" | "detail"> } | null = null;
+
+async function checkTelegram(): Promise<Pick<Device, "state" | "detail">> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return { state: "unknown", detail: "Bot token not set in Vercel" };
+  if (telegramCache && Date.now() - telegramCache.at < 60_000) return telegramCache.device;
+
+  let device: Pick<Device, "state" | "detail">;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    device = res.ok
+      ? { state: "ok" }
+      : { state: "error", detail: "Telegram rejected the bot token" };
+  } catch {
+    device = { state: "error", detail: "Cannot reach Telegram" };
+  }
+  telegramCache = { at: Date.now(), device };
+  return device;
+}
+
+export const getDevices = createServerFn({ method: "GET" }).handler(async (): Promise<Device[]> => {
+  const now = Date.now();
+  let apiOk = true;
+  let apiDetail: string | undefined;
+
+  type Latest = { received_at: string; value: number; secondary_value: number | null; tertiary_value: number | null };
+  let tilt: Latest | undefined;
+  let sag: Latest | undefined;
+  let tiltAllZero = false;
+
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data, error } = await supabaseAdmin.from("esp32_latest_state").select("*");
+    if (error) throw error;
+    tilt = data?.find((r) => r.pole_id === "P001" && r.metric === "tilt");
+    sag = data?.find((r) => r.pole_id === "P002" && r.metric === "sag");
+
+    // Tilt "frozen at exactly 0 on both axes" for the last 5 readings = ADXL345 not wired / dead.
+    const { data: recent } = await supabaseAdmin
+      .from("esp32_readings")
+      .select("value, secondary_value, tertiary_value")
+      .eq("pole_id", "P001")
+      .eq("metric", "tilt")
+      .order("recorded_at", { ascending: false })
+      .limit(5);
+    tiltAllZero =
+      !!recent &&
+      recent.length >= 5 &&
+      recent.every((r) => r.value === 0 && (r.secondary_value ?? 0) === 0 && (r.tertiary_value ?? 0) === 0);
+  } catch (err) {
+    console.error("[devices] database check failed", err);
+    apiOk = false;
+    apiDetail = "Cannot reach the database";
+  }
+
+  const tiltAge = tilt ? now - new Date(tilt.received_at).getTime() : Infinity;
+  const sagAge = sag ? now - new Date(sag.received_at).getTime() : Infinity;
+  const tiltFresh = tiltAge <= DEVICE_FRESH_MS;
+  const sagFresh = sagAge <= DEVICE_FRESH_MS;
+
+  function stream(
+    id: string,
+    name: string,
+    row: Latest | undefined,
+    age: number,
+    fresh: boolean,
+    otherFresh: boolean,
+    sensorName: string,
+  ): Device {
+    if (!apiOk) return { id, name, online: false, state: "unknown", detail: "Status unavailable" };
+    if (!row) return { id, name, online: false, state: "error", detail: "No data received yet" };
+    if (!fresh) {
+      return {
+        id,
+        name,
+        online: false,
+        state: "error",
+        // The other stream is alive -> the ESP32 is fine, this sensor is the problem.
+        detail: otherFresh
+          ? `${sensorName} not responding (ESP32 is online)`
+          : `ESP32 offline - no data for ${ageText(age)}`,
+      };
+    }
+    return { id, name, online: true, state: "ok" };
+  }
+
+  const esp1 = stream("esp32-1", "ESP32 #1 (Tilt)", tilt, tiltAge, tiltFresh, sagFresh, "Tilt sensor");
+  if (esp1.state === "ok" && tiltAllZero) {
+    esp1.online = false;
+    esp1.state = "error";
+    esp1.detail = "Tilt sensor reads exactly 0 - check ADXL345 wiring";
+  }
+  const esp2 = stream("esp32-2", "ESP32 #2 (Sag)", sag, sagAge, sagFresh, tiltFresh, "Sag sensor");
+
+  const tg = await checkTelegram();
+
+  return [
+    esp1,
+    esp2,
+    {
+      id: "api",
+      name: "API Server",
+      online: apiOk,
+      state: apiOk ? "ok" : "error",
+      detail: apiDetail,
+    },
+    { id: "telegram", name: "Telegram Bot", online: tg.state === "ok", ...tg },
+  ];
+});
 
 export const getHealthRadar = createServerFn({ method: "GET" }).handler(async () => HEALTH_RADAR);
 
@@ -222,3 +341,46 @@ export const getSettings = createServerFn({ method: "GET" }).handler(async () =>
   autoRefresh: true,
   refreshSeconds: 5,
 }));
+
+/**
+ * Raw readings for the "Export Data" button: every stored ESP32 reading of the
+ * pole's metric for the last 24 hours (paged, capped at 50,000 rows).
+ */
+export const exportPoleReadings = createServerFn({ method: "GET" })
+  .inputValidator((d: unknown) => z.object({ poleId: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const pole = POLES.find((p) => p.id === data.poleId);
+    if (!pole) return { rows: [], truncated: false };
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const since = new Date(Date.now() - RANGE_WINDOW_MS["24h"]).toISOString();
+    const PAGE = 1000; // Supabase returns at most 1000 rows per request
+    const MAX_ROWS = 50_000;
+
+    const rows: {
+      recorded_at: string;
+      value: number;
+      secondary_value: number | null;
+      tertiary_value: number | null;
+      signal_dbm: number | null;
+      maintenance_switch_on: boolean | null;
+    }[] = [];
+
+    for (let from = 0; from < MAX_ROWS; from += PAGE) {
+      const { data: page, error } = await supabaseAdmin
+        .from("esp32_readings")
+        .select("recorded_at, value, secondary_value, tertiary_value, signal_dbm, maintenance_switch_on")
+        .eq("pole_id", pole.id)
+        .eq("metric", pole.metric)
+        .gte("recorded_at", since)
+        .order("recorded_at", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) {
+        console.error("[export] fetch failed", error);
+        throw new Error("Could not load readings for export");
+      }
+      rows.push(...(page ?? []));
+      if (!page || page.length < PAGE) break;
+    }
+    return { rows, truncated: rows.length >= MAX_ROWS };
+  });

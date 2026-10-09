@@ -13,20 +13,31 @@ import {
 import type { MetricKey, TimeRange } from "@/types";
 
 export const polesQuery = () =>
-  queryOptions({ queryKey: ["poles"], queryFn: () => getPoles(), refetchInterval: 5000 });
+  queryOptions({
+    queryKey: ["poles"],
+    queryFn: () => getPoles(),
+    refetchInterval: 1000,
+    refetchIntervalInBackground: true,
+  });
 
 export const sitePowerStatusQuery = () =>
   queryOptions({
     queryKey: ["site-power-status"],
     queryFn: () => getSitePowerStatus(),
-    refetchInterval: 3000,
+    refetchInterval: 1000,
+    refetchIntervalInBackground: true,
   });
 
 export const poleQuery = (id: string) =>
   queryOptions({ queryKey: ["pole", id], queryFn: () => getPole({ data: { id } }) });
 
 export const devicesQuery = () =>
-  queryOptions({ queryKey: ["devices"], queryFn: () => getDevices() });
+  queryOptions({
+    queryKey: ["devices"],
+    queryFn: () => getDevices(),
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+  });
 
 export const healthRadarQuery = () =>
   queryOptions({ queryKey: ["health-radar"], queryFn: () => getHealthRadar() });
