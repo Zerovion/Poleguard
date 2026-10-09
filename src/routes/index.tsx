@@ -9,7 +9,7 @@ import { DashboardSkeleton } from "@/components/common/Skeletons";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { PoleStatusCard } from "@/components/dashboard/PoleStatusCard";
 import { PoleDetailsModal } from "@/components/pole/PoleDetailsModal";
-import { SitePowerStatusCard } from "@/components/dashboard/SitePowerStatusCard";
+import { MaintenancePowerCard } from "@/components/dashboard/MaintenancePowerCard";
 import { polesQuery, sitePowerStatusQuery } from "@/features/queries";
 
 const searchSchema = z.object({ pole: fallback(z.string(), "").default("") });
@@ -43,14 +43,16 @@ export const Route = createFileRoute("/")({
   pendingComponent: DashboardSkeleton,
   pendingMs: 0,
   pendingMinMs: 300,
-  errorComponent: ({ error }) => <p role="alert">{error.message}</p>,
+  errorComponent: ({ error }) => <p role="alert">{error instanceof Error ? error.message : String(error)}</p>,
   notFoundComponent: () => <p>Nothing here.</p>,
 });
 
 function DashboardPage() {
   const { pole } = Route.useSearch();
   const navigate = useNavigate();
-  const { data: poles } = useSuspenseQuery(polesQuery());
+  const { data: allPoles } = useSuspenseQuery(polesQuery());
+  // Leakage pole (P003) is replaced on this page by the Maintenance & Power card.
+  const poles = allPoles.filter((p) => p.metric !== "leakage");
 
   const healthy = poles.filter((p) => p.status === "normal").length;
   const warnings = poles.filter((p) => p.status === "warning").length;
@@ -60,8 +62,6 @@ function DashboardPage() {
   return (
     <>
       <PageHeader title="Dashboard Overview" subtitle="Real-time status across all monitored poles" />
-
-      <SitePowerStatusCard />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
@@ -102,6 +102,7 @@ function DashboardPage() {
         {poles.map((p, i) => (
           <PoleStatusCard key={p.id} pole={p} index={i} />
         ))}
+        <MaintenancePowerCard index={poles.length} />
       </div>
 
       {pole ? (
