@@ -64,6 +64,10 @@ export interface Device {
   id: string;
   name: string;
   online: boolean;
+  /** ok = working, error = problem (shown red), unknown = not set up (shown grey) */
+  state: "ok" | "error" | "unknown";
+  /** short human-readable explanation, shown when something is wrong */
+  detail?: string;
 }
 
 export interface PoleStatistics {
